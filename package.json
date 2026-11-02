@@ -1,0 +1,82 @@
+{
+  "name": "@upsight/map-renderer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Composable geographic scene editing and Babylon rendering with an optional MapLibre host.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nomnom-exe/upsight-map-renderer.git"
+  },
+  "homepage": "https://github.com/nomnom-exe/upsight-map-renderer",
+  "bugs": {
+    "url": "https://github.com/nomnom-exe/upsight-map-renderer/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./babylon": {
+      "types": "./dist/rendering/BabylonRenderer.d.ts",
+      "import": "./dist/rendering/BabylonRenderer.js"
+    },
+    "./maplibre": {
+      "types": "./dist/engine/MapLibreConnection.d.ts",
+      "import": "./dist/engine/MapLibreConnection.js"
+    },
+    "./geometry.worker.js": "./dist/rendering/geometry.worker.js",
+    "./routeSurface.worker.js": "./dist/geo/routeSurface.worker.js",
+    "./geo/*": {
+      "types": "./dist/geo/*.d.ts",
+      "import": "./dist/geo/*.js"
+    },
+    "./rendering/*": {
+      "types": "./dist/rendering/*.d.ts",
+      "import": "./dist/rendering/*.js"
+    },
+    "./engine/*": {
+      "types": "./dist/engine/*.d.ts",
+      "import": "./dist/engine/*.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.rst",
+    "examples"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
+    "test": "vitest run --config vitest.config.ts",
+    "verify": "node scripts/verify-package.mjs"
+  },
+  "dependencies": {
+    "earcut": "3.0.2"
+  },
+  "peerDependencies": {
+    "@babylonjs/core": "^9.27.1",
+    "@babylonjs/loaders": "^9.27.1",
+    "maplibre-gl": "^6.10.0"
+  },
+  "peerDependenciesMeta": {
+    "maplibre-gl": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "@types/earcut": "3.0.0",
+    "@babylonjs/core": "9.27.1",
+    "@babylonjs/loaders": "9.27.1",
+    "maplibre-gl": "6.10.0",
+    "vitest": "2.1.9",
+    "esbuild": "0.25.12"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "UNLICENSED"
+}
