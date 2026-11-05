@@ -1,10 +1,10 @@
-/** @file Install and test the packed renderer in a temporary app. @author Norman */
+/** @file Test archive and Git installation in temporary apps. @author Norman */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { build } from "esbuild";
 
@@ -28,8 +28,6 @@ const installed = path.join(dir, "node_modules/@upsight/map-renderer");
 writeFileSync(path.join(dir, "package.json"), JSON.stringify({
   private: true, type: "module", dependencies: {
     "@upsight/map-renderer": `file:${pack.filename}`,
-    "@babylonjs/core": sourceManifest.devDependencies["@babylonjs/core"],
-    "@babylonjs/loaders": sourceManifest.devDependencies["@babylonjs/loaders"],
   },
 }));
 console.log("Installing packed SDK into an isolated consumer (registry/cache access required)...");
@@ -38,9 +36,13 @@ assert.equal(realpathSync(installed), installed, "SDK must be an installed archi
 assert.ok(!existsSync(path.join(dir, "node_modules/maplibre-gl")), "MapLibre must remain optional.");
 writeFileSync(path.join(dir, "consumer.mjs"), `
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { SceneStore, DEFAULT_STYLE, applyFeatureEnvelope, LiveEventLayer, RoadSurfaceIndex, RouteSurfaceResolver, RoutePlayback, RouteSampler, fromGeoJSON, routeFeature, groupAnnotations } from '@upsight/map-renderer';
 import { RoutePlayback as PlaybackEntry } from '@upsight/map-renderer/engine/RoutePlayback';
 assert.ok(import.meta.resolve('@upsight/map-renderer').startsWith(new URL('./node_modules/', import.meta.url).href));
+for (const entry of ['@upsight/map-renderer/babylon', '@upsight/map-renderer/geometry.worker.js', '@upsight/map-renderer/routeSurface.worker.js', '@babylonjs/core', '@babylonjs/loaders', 'earcut']) {
+  assert.ok(existsSync(new URL(import.meta.resolve(entry))), entry + ' must be installed');
+}
 const store = new SceneStore();
 applyFeatureEnvelope(store, { schemaVersion: 1, source: { id: 'partner', label: 'Partner', status: 'snapshot', attribution: 'Fixture' }, features: [{ id: 'partner:label', source: 'partner', layer: 'annotations', label: 'Depot', geometry: { type: 'Point', coordinates: [103.8,1.3] }, model: { kind: 'label' }, style: DEFAULT_STYLE, properties: {} }] });
 assert.equal(store.size, 1);
@@ -65,9 +67,54 @@ assert.ok(new RoadSurfaceIndex([],route.positions[0]).resolve(route).surfaceMatc
 const resolver = new RouteSurfaceResolver(null); let resolved = false;
 resolver.resolve(route, () => { resolved = true; }); assert.ok(resolved); resolver.dispose();
 const restored = new SceneStore(); store.execute({type:'remove',ids:['partner:label']}); restored.importScenario(store.exportScenario());
-console.log('Packed SDK imports in Node without browser globals; scene contract passes.');
+console.log('Installed SDK imports in Node without browser globals; scene contract passes.');
 `);
 console.log(execFileSync(process.execPath, ["consumer.mjs"], { cwd: dir, encoding: "utf8" }).trim());
+
+// A source-only Git checkout must build during installation, without a manual build.
+const gitDir = mkdtempSync(path.join(tmpdir(), "upsight-git-consumer-"));
+const sourceDir = path.join(gitDir, "source repo");
+mkdirSync(sourceDir);
+const git = (args, cwd) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
+for (const file of git(["ls-files", "--cached", "--others", "--exclude-standard", "-z"], workspace).split("\0").filter(Boolean)) {
+  if (/^(dist|node_modules)\//.test(file) || !existsSync(path.join(workspace, file))) continue;
+  const target = path.join(sourceDir, file);
+  mkdirSync(path.dirname(target), { recursive: true });
+  copyFileSync(path.join(workspace, file), target);
+}
+assert.ok(!existsSync(path.join(sourceDir, "dist")), "Git fixture must not contain compiled files.");
+git(["init", "--quiet"], sourceDir);
+git(["config", "core.autocrlf", "false"], sourceDir);
+git(["add", "."], sourceDir);
+git(["-c", "user.name=Package verification", "-c", "user.email=package-test@example.invalid",
+  "-c", "commit.gpgsign=false", "-c", "core.hooksPath=disabled-hooks",
+  "commit", "--quiet", "-m", "Test source installation"], sourceDir);
+const revision = git(["rev-parse", "HEAD"], sourceDir).trim();
+writeFileSync(path.join(gitDir, "package.json"), JSON.stringify({
+  private: true, type: "module", dependencies: {
+    "@upsight/map-renderer": `git+${pathToFileURL(sourceDir).href}#${revision}`,
+  },
+}));
+console.log("Installing SDK from source-only Git repository with automatic preparation...");
+npm(["install", "--no-audit", "--no-fund"], gitDir);
+const gitInstalled = path.join(gitDir, "node_modules/@upsight/map-renderer");
+assert.equal(realpathSync(gitInstalled), gitInstalled, "Git SDK must be installed, not linked.");
+for (const file of ["dist/index.js", "dist/index.d.ts", "dist/rendering/geometry.worker.js", "dist/geo/routeSurface.worker.js"]) {
+  assert.ok(existsSync(path.join(gitInstalled, file)), `Git install must build ${file}.`);
+}
+for (const name of ["typescript", "vitest", "esbuild", "maplibre-gl"]) {
+  assert.ok(!existsSync(path.join(gitDir, "node_modules", name)), `${name} must not be required by the consumer.`);
+}
+assert.ok(!existsSync(path.join(gitInstalled, "src")), "Only the built library should ship.");
+copyFileSync(path.join(dir, "consumer.mjs"), path.join(gitDir, "consumer.mjs"));
+console.log(execFileSync(process.execPath, ["consumer.mjs"], { cwd: gitDir, encoding: "utf8" }).trim());
+const lock = JSON.parse(readFileSync(path.join(gitDir, "package-lock.json"), "utf8"));
+assert.ok(lock.packages["node_modules/@upsight/map-renderer"].resolved.endsWith(`#${revision}`), "Lockfile must pin the Git commit.");
+for (const file of ["dist/rendering/geometry.worker.js", "dist/geo/routeSurface.worker.js"]) {
+  await build({ entryPoints: [path.join(gitInstalled, file)], bundle: true, write: false, format: "esm", platform: "browser", logLevel: "silent" });
+}
+console.log("Git installation, automatic dependencies and worker bundles passed.");
+
 npm(["install", "--ignore-scripts", "--no-audit", "--no-fund",
   `maplibre-gl@${sourceManifest.devDependencies["maplibre-gl"]}`,
   `typescript@${JSON.parse(readFileSync(require.resolve("typescript/package.json"), "utf8")).version}`], dir);

@@ -9,10 +9,39 @@ Each application creates its own scene and camera. The library provides the
 rendering and editing code; it does not share camera state between applications.
 The host application supplies map data, routing, model storage and its UI.
 
-Build and install
------------------
+Install
+-------
 
-Use Node.js 22 or later. Clone the source, check it and build a package archive::
+Use Node.js 22 or later, npm 10 or 11, and Git. Run this in your application::
+
+    npm install git+https://github.com/nomnom-exe/upsight-map-renderer.git
+
+npm downloads the source, builds the library and installs its required
+dependencies, including Babylon.js and Earcut. You do not need to clone the
+repository, build an archive or create an npm account.
+
+If your application also needs MapLibre, install both in one command::
+
+    npm install git+https://github.com/nomnom-exe/upsight-map-renderer.git maplibre-gl@6.10.0
+
+MapLibre is optional. Keep your application's ``package.json`` and
+``package-lock.json`` in Git. Teammates then run ``npm ci`` to install the same
+renderer commit and dependency versions. Import the library as
+``@upsight/map-renderer`` in your code.
+
+The Git installation runs the package's ``prepare`` script. Do not disable
+scripts for this install. npm 12 also requires permission for Git
+dependencies and lifecycle scripts; see the
+`npm installation settings <https://docs.npmjs.com/cli/v12/commands/npm-install/>`_.
+
+Use a browser bundler that supports ES modules and worker URLs.
+The package is distributed through GitHub, not an npm registry.
+
+Build an archive instead
+------------------------
+
+To share a built file without requiring Git in the consuming app, clone the
+source and build an archive::
 
     git clone https://github.com/nomnom-exe/upsight-map-renderer.git
     cd upsight-map-renderer
@@ -24,21 +53,12 @@ Use Node.js 22 or later. Clone the source, check it and build a package archive:
 above writes ``upsight-map-renderer-0.1.0.tgz`` outside the source folder.
 It does not publish anything to a registry.
 
-Copy that archive to your application folder, then run these commands there::
+Copy that archive to your application folder, then run::
 
-    npm install ./upsight-map-renderer-0.1.0.tgz @babylonjs/core@9.27.1 @babylonjs/loaders@9.27.1
+    npm install ./upsight-map-renderer-0.1.0.tgz
 
-For the MapLibre integration, also run::
-
-    npm install maplibre-gl@6.10.0
-
-Use a browser bundler that supports ES modules and worker URLs.
-Keep your application's lockfile so teammates install the same dependencies.
-
-The package is currently distributed from this repository, not an npm registry.
-Install the built archive using the commands above. A GitHub source download
-does not contain the compiled ``dist`` folder; build and pack it first.
-No npm account is needed to build, pack or install the archive.
+A GitHub source ZIP or tarball does not contain the compiled ``dist`` folder.
+Use the Git installation command above or build and pack the source first.
 
 Choose a camera
 ---------------
@@ -185,19 +205,22 @@ in the renderer repository before opening a pull request::
     npm run build
     npm run verify
 
-``npm run verify`` creates an archive and a separate consumer in the system's
-temporary folder. It checks package imports, TypeScript declarations and
-browser/worker bundles. Tests remain in this repository and are not shipped
-in the package archive.
+``npm run verify`` tests both archive and Git installation in temporary apps.
+The Git check starts with source files only and verifies that npm builds the
+library and installs its required dependencies. The checks also cover imports,
+TypeScript declarations and browser/worker bundles. Tests remain in this
+repository and are not shipped in the package archive.
 
 Include an example or regression test for a behaviour change. Keep existing
 imports and method signatures compatible, and explain any change that requires
 consumer applications to update. A maintainer reviews contributions before
 merging. GitHub Actions runs the checks on Windows and Linux.
 
-After an accepted update, build a new archive and update the consuming app's
-dependency and lockfile deliberately. Existing installations do not update
-automatically. Keep archives, screenshots, logs and local settings out of commits.
+After an accepted update, rerun the Git installation command or install a new
+archive in the consuming app, then review and commit its dependency and lockfile
+changes. Existing installations do not update automatically. To select a
+specific renderer release, append ``#<commit-sha>`` or ``#<tag>`` to the Git URL.
+Keep archives, screenshots, logs and local settings out of commits.
 
 `Source <https://github.com/nomnom-exe/upsight-map-renderer>`_ |
 `Report an issue <https://github.com/nomnom-exe/upsight-map-renderer/issues>`_ |
