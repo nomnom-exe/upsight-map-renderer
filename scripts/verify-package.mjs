@@ -6,9 +6,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
+import { parseArgs } from "node:util";
 import { build } from "esbuild";
 
 const workspace = fileURLToPath(new URL("../", import.meta.url));
+const { values: options } = parseArgs({ options: {
+  browser: { type: "boolean", default: false },
+  "archive-only": { type: "boolean", default: false },
+  "pack-destination": { type: "string" },
+} });
 const require = createRequire(import.meta.url);
 const sourceManifest = JSON.parse(readFileSync(path.join(workspace, "package.json"), "utf8"));
 const dir = mkdtempSync(path.join(tmpdir(), "upsight-map-consumer-"));
@@ -35,9 +41,20 @@ writeFileSync(path.join(dir, "package.json"), JSON.stringify({
   },
 }));
 console.log("Installing packed SDK into an isolated consumer (registry/cache access required)...");
-npm(["install", "--ignore-scripts", "--no-audit", "--no-fund"], dir);
+const archiveInstallStart = performance.now();
+npm(["install", "--no-audit", "--no-fund"], dir);
+console.log(`Archive installation completed in ${((performance.now() - archiveInstallStart) / 1000).toFixed(1)} seconds.`);
 assert.equal(realpathSync(installed), installed, "SDK must be an installed archive, not a workspace link.");
 assert.ok(!existsSync(path.join(dir, "node_modules/maplibre-gl")), "MapLibre must remain optional.");
+for (const name of ["typescript", "vitest", "esbuild"]) {
+  assert.ok(!existsSync(path.join(dir, "node_modules", name)), `${name} must not be installed by archive consumers.`);
+}
+for (const file of ["src", "tests", "tsconfig.json"]) {
+  assert.ok(!existsSync(path.join(installed, file)), `${file} must not ship in the archive.`);
+}
+const archiveLock = JSON.parse(readFileSync(path.join(dir, "package-lock.json"), "utf8"));
+assert.equal(archiveLock.packages["node_modules/@upsight/map-renderer"].integrity, pack.integrity,
+  "The installed archive must match the verified package.");
 writeFileSync(path.join(dir, "consumer.mjs"), `
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
@@ -75,49 +92,51 @@ console.log('Installed SDK imports in Node without browser globals; scene contra
 `);
 console.log(execFileSync(process.execPath, ["consumer.mjs"], { cwd: dir, encoding: "utf8" }).trim());
 
-// A source-only Git checkout must build during installation, without a manual build.
-const gitDir = mkdtempSync(path.join(tmpdir(), "upsight-git-consumer-"));
-const sourceDir = path.join(gitDir, "source repo");
-mkdirSync(sourceDir);
-const git = (args, cwd) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
-for (const file of git(["ls-files", "--cached", "--others", "--exclude-standard", "-z"], workspace).split("\0").filter(Boolean)) {
-  if (/^(dist|node_modules)\//.test(file) || !existsSync(path.join(workspace, file))) continue;
-  const target = path.join(sourceDir, file);
-  mkdirSync(path.dirname(target), { recursive: true });
-  copyFileSync(path.join(workspace, file), target);
+if (!options["archive-only"]) {
+  // A source-only Git checkout must build during installation, without a manual build.
+  const gitDir = mkdtempSync(path.join(tmpdir(), "upsight-git-consumer-"));
+  const sourceDir = path.join(gitDir, "source repo");
+  mkdirSync(sourceDir);
+  const git = (args, cwd) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
+  for (const file of git(["ls-files", "--cached", "--others", "--exclude-standard", "-z"], workspace).split("\0").filter(Boolean)) {
+    if (/^(dist|node_modules)\//.test(file) || !existsSync(path.join(workspace, file))) continue;
+    const target = path.join(sourceDir, file);
+    mkdirSync(path.dirname(target), { recursive: true });
+    copyFileSync(path.join(workspace, file), target);
+  }
+  assert.ok(!existsSync(path.join(sourceDir, "dist")), "Git fixture must not contain compiled files.");
+  git(["init", "--quiet"], sourceDir);
+  git(["config", "core.autocrlf", "false"], sourceDir);
+  git(["add", "."], sourceDir);
+  git(["-c", "user.name=Package verification", "-c", "user.email=package-test@example.invalid",
+    "-c", "commit.gpgsign=false", "-c", "core.hooksPath=disabled-hooks",
+    "commit", "--quiet", "-m", "Test source installation"], sourceDir);
+  const revision = git(["rev-parse", "HEAD"], sourceDir).trim();
+  writeFileSync(path.join(gitDir, "package.json"), JSON.stringify({
+    private: true, type: "module", dependencies: {
+      "@upsight/map-renderer": `git+${pathToFileURL(sourceDir).href}#${revision}`,
+    },
+  }));
+  console.log("Installing SDK from source-only Git repository with automatic preparation...");
+  npm(["install", "--no-audit", "--no-fund"], gitDir);
+  const gitInstalled = path.join(gitDir, "node_modules/@upsight/map-renderer");
+  assert.equal(realpathSync(gitInstalled), gitInstalled, "Git SDK must be installed, not linked.");
+  for (const file of ["dist/index.js", "dist/index.d.ts", "dist/rendering/geometry.worker.js", "dist/geo/routeSurface.worker.js"]) {
+    assert.ok(existsSync(path.join(gitInstalled, file)), `Git install must build ${file}.`);
+  }
+  for (const name of ["typescript", "vitest", "esbuild", "maplibre-gl"]) {
+    assert.ok(!existsSync(path.join(gitDir, "node_modules", name)), `${name} must not be required by the consumer.`);
+  }
+  assert.ok(!existsSync(path.join(gitInstalled, "src")), "Only the built library should ship.");
+  copyFileSync(path.join(dir, "consumer.mjs"), path.join(gitDir, "consumer.mjs"));
+  console.log(execFileSync(process.execPath, ["consumer.mjs"], { cwd: gitDir, encoding: "utf8" }).trim());
+  const lock = JSON.parse(readFileSync(path.join(gitDir, "package-lock.json"), "utf8"));
+  assert.ok(lock.packages["node_modules/@upsight/map-renderer"].resolved.endsWith(`#${revision}`), "Lockfile must pin the Git commit.");
+  for (const file of ["dist/rendering/geometry.worker.js", "dist/geo/routeSurface.worker.js"]) {
+    await build({ entryPoints: [path.join(gitInstalled, file)], bundle: true, write: false, format: "esm", platform: "browser", logLevel: "silent" });
+  }
+  console.log("Git installation, automatic dependencies and worker bundles passed.");
 }
-assert.ok(!existsSync(path.join(sourceDir, "dist")), "Git fixture must not contain compiled files.");
-git(["init", "--quiet"], sourceDir);
-git(["config", "core.autocrlf", "false"], sourceDir);
-git(["add", "."], sourceDir);
-git(["-c", "user.name=Package verification", "-c", "user.email=package-test@example.invalid",
-  "-c", "commit.gpgsign=false", "-c", "core.hooksPath=disabled-hooks",
-  "commit", "--quiet", "-m", "Test source installation"], sourceDir);
-const revision = git(["rev-parse", "HEAD"], sourceDir).trim();
-writeFileSync(path.join(gitDir, "package.json"), JSON.stringify({
-  private: true, type: "module", dependencies: {
-    "@upsight/map-renderer": `git+${pathToFileURL(sourceDir).href}#${revision}`,
-  },
-}));
-console.log("Installing SDK from source-only Git repository with automatic preparation...");
-npm(["install", "--no-audit", "--no-fund"], gitDir);
-const gitInstalled = path.join(gitDir, "node_modules/@upsight/map-renderer");
-assert.equal(realpathSync(gitInstalled), gitInstalled, "Git SDK must be installed, not linked.");
-for (const file of ["dist/index.js", "dist/index.d.ts", "dist/rendering/geometry.worker.js", "dist/geo/routeSurface.worker.js"]) {
-  assert.ok(existsSync(path.join(gitInstalled, file)), `Git install must build ${file}.`);
-}
-for (const name of ["typescript", "vitest", "esbuild", "maplibre-gl"]) {
-  assert.ok(!existsSync(path.join(gitDir, "node_modules", name)), `${name} must not be required by the consumer.`);
-}
-assert.ok(!existsSync(path.join(gitInstalled, "src")), "Only the built library should ship.");
-copyFileSync(path.join(dir, "consumer.mjs"), path.join(gitDir, "consumer.mjs"));
-console.log(execFileSync(process.execPath, ["consumer.mjs"], { cwd: gitDir, encoding: "utf8" }).trim());
-const lock = JSON.parse(readFileSync(path.join(gitDir, "package-lock.json"), "utf8"));
-assert.ok(lock.packages["node_modules/@upsight/map-renderer"].resolved.endsWith(`#${revision}`), "Lockfile must pin the Git commit.");
-for (const file of ["dist/rendering/geometry.worker.js", "dist/geo/routeSurface.worker.js"]) {
-  await build({ entryPoints: [path.join(gitInstalled, file)], bundle: true, write: false, format: "esm", platform: "browser", logLevel: "silent" });
-}
-console.log("Git installation, automatic dependencies and worker bundles passed.");
 
 npm(["install", "--ignore-scripts", "--no-audit", "--no-fund",
   `maplibre-gl@${sourceManifest.devDependencies["maplibre-gl"]}`,
@@ -141,10 +160,24 @@ for (const entry of [path.join(dir, "consumer.ts"), path.join(installed, "dist/r
 }
 const manifest = JSON.parse(readFileSync(path.join(installed, "package.json"), "utf8"));
 assert.equal(manifest.name, "@upsight/map-renderer");
+assert.equal(manifest.version, sourceManifest.version);
+assert.equal(pack.filename, `upsight-map-renderer-${manifest.version}.tgz`);
+if (options["pack-destination"]) {
+  const destination = path.resolve(options["pack-destination"]);
+  const isOutsideWorkspace = directory => {
+    const relative = path.relative(realpathSync(workspace), directory);
+    return path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`);
+  };
+  assert.ok(isOutsideWorkspace(destination), "Package output must be outside the repository.");
+  mkdirSync(destination, { recursive: true });
+  assert.ok(isOutsideWorkspace(realpathSync(destination)), "Package output must be outside the repository.");
+  copyFileSync(path.join(dir, pack.filename), path.join(destination, pack.filename));
+  console.log(`Verified package: ${path.join(destination, pack.filename)}`);
+}
 console.log(`Types and browser/worker bundles passed. ${pack.entryCount} files, ${(pack.size / 1024).toFixed(0)} KB packed. Artifact: ${path.join(dir, pack.filename)}`);
 
 // The optional browser check uses sample map data. Serve the directory printed below to open it locally.
-if (process.argv.includes("--browser")) {
+if (options.browser) {
   const smoke = path.join(dir, "browser-smoke");
   mkdirSync(smoke);
   writeFileSync(path.join(dir, "browser.ts"), `

@@ -35,12 +35,38 @@ The quickstarts use a synthetic building.
 Install
 -------
 
-Use Node.js 22 or later, npm 10 or 11, and Git. Run this in your application::
+Use Node.js 22 or later, npm 10 or 11, and a browser bundler that supports ES
+modules and worker URLs.
+
+Prebuilt package
+~~~~~~~~~~~~~~~~
+
+Install version ``0.1.0``::
+
+    npm install https://github.com/nomnom-exe/upsight-map-renderer/releases/download/v0.1.0/upsight-map-renderer-0.1.0.tgz
+
+The prebuilt package includes compiled JavaScript, types and workers. npm installs
+its runtime dependencies without Git preparation or a local TypeScript build.
+For MapLibre integration::
+
+    npm install https://github.com/nomnom-exe/upsight-map-renderer/releases/download/v0.1.0/upsight-map-renderer-0.1.0.tgz maplibre-gl@6.10.0
+
+Commit ``package.json`` and ``package-lock.json``. Use ``npm ci`` for repeatable
+installs and import the library as ``@upsight/map-renderer``.
+
+Use the attached ``.tgz`` package, not GitHub's automatic source ZIP or tarball.
+For npm 12, enable URL dependencies with ``allow-remote=root`` in the application's
+``.npmrc``; see `npm installation settings <https://docs.npmjs.com/cli/v12/commands/npm-install/#allow-remote>`_.
+
+Source installation
+~~~~~~~~~~~~~~~~~~~
+
+This option requires Git and builds the library locally::
 
     npm install git+https://github.com/nomnom-exe/upsight-map-renderer.git
 
-npm builds the library and installs its dependencies, including Babylon.js and
-Earcut.
+npm installs build dependencies and compiles the library before installing it.
+This takes longer than a prebuilt package installation.
 
 If your application also needs MapLibre, install both in one command::
 
@@ -54,8 +80,7 @@ scripts for this install. npm 12 also requires permission for Git
 dependencies and lifecycle scripts; see the
 `npm installation settings <https://docs.npmjs.com/cli/v12/commands/npm-install/>`_.
 
-Use a browser bundler that supports ES modules and worker URLs.
-Install from the GitHub URL above; the package is not published to an npm registry.
+The package is not published to an npm registry.
 
 MapLibre example
 ----------------
@@ -358,16 +383,32 @@ declarations, browser/worker bundles and packaged documentation. It also typeche
 and bundles the quickstart examples. Tests remain in the repository and are
 excluded from the package archive.
 
+``npm run verify -- --archive-only`` checks the prebuilt package without repeating
+the Git installation. Add ``--pack-destination <directory>`` to copy the verified
+archive to a directory outside the repository.
+
 Include an example or regression test for a behaviour change. Keep existing
 imports and method signatures compatible, and explain any change that requires
 consumer applications to update. A maintainer reviews contributions before
 merging. GitHub Actions runs the checks on Windows and Linux.
 
-After an accepted update, rerun the Git installation command or install a new
-archive in the consuming app, then review and commit its dependency and lockfile
-changes. Existing installations do not update automatically. To select a
-specific renderer release, append ``#<commit-sha>`` or ``#<tag>`` to the Git URL.
+To update a consuming app, install the new version's release URL, then review and
+commit its manifest and lockfile changes. Source installations can select a commit
+or tag by appending ``#<commit-sha>`` or ``#<tag>`` to the Git URL.
 Keep archives, screenshots, logs and local settings out of commits.
+
+Release a prebuilt package
+------------------------------
+
+On ``main``, update the version in ``package.json`` and ``package-lock.json``
+together, then push the reviewed commit and a matching tag such as ``v0.1.1``.
+
+The release workflow runs tests, builds the package and verifies its installation,
+types and worker bundles. It attaches the verified ``.tgz`` to a GitHub Release.
+Compiled files and archives stay outside the source repository.
+
+Consumers commit their updated manifest and lockfile. Publish a new version for
+subsequent releases; do not replace an existing release asset.
 
 `Source <https://github.com/nomnom-exe/upsight-map-renderer>`_ |
 `Report an issue <https://github.com/nomnom-exe/upsight-map-renderer/issues>`_ |
