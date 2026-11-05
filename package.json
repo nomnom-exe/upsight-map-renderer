@@ -45,6 +45,7 @@
   "files": [
     "dist",
     "README.rst",
+    "docs",
     "examples"
   ],
   "scripts": {

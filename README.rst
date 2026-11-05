@@ -5,9 +5,32 @@ A TypeScript library for drawing and editing buildings, roads, routes, labels
 and GLB models with Babylon.js. Applications supply the geographic data and
 can attach the renderer to an existing MapLibre map.
 
-Each application creates its own scene and camera. The library provides the
-rendering and editing code; it does not share camera state between applications.
-The host application supplies map data, routing, model storage and its UI.
+The package is framework-independent. The host application supplies map data,
+routing, model storage and UI.
+
+Documentation
+-------------
+
+.. list-table:: Guides and examples
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Topic
+     - Reference
+   * - Display a map and a building
+     - `MapLibre quickstart <examples/basicMap.ts>`_
+   * - Use Babylon without MapLibre
+     - `Standalone quickstart <examples/standaloneMap.ts>`_
+   * - Find methods, parameters and import paths
+     - `API guide <docs/API.rst>`_
+   * - Supply server data and preserve edits
+     - `Data and refresh guide <docs/DATA.rst>`_
+   * - Add GLB models
+     - `Partner models <examples/partnerModels.ts>`_
+   * - Render a new object type
+     - `Custom depot extension <examples/depotExtension.ts>`_
+
+The quickstarts use a synthetic building.
 
 Install
 -------
@@ -16,18 +39,15 @@ Use Node.js 22 or later, npm 10 or 11, and Git. Run this in your application::
 
     npm install git+https://github.com/nomnom-exe/upsight-map-renderer.git
 
-npm downloads the source, builds the library and installs its required
-dependencies, including Babylon.js and Earcut. You do not need to clone the
-repository, build an archive or create an npm account.
+npm builds the library and installs its dependencies, including Babylon.js and
+Earcut.
 
 If your application also needs MapLibre, install both in one command::
 
     npm install git+https://github.com/nomnom-exe/upsight-map-renderer.git maplibre-gl@6.10.0
 
-MapLibre is optional. Keep your application's ``package.json`` and
-``package-lock.json`` in Git. Teammates then run ``npm ci`` to install the same
-renderer commit and dependency versions. Import the library as
-``@upsight/map-renderer`` in your code.
+MapLibre is optional. Commit ``package.json`` and ``package-lock.json`` and use
+``npm ci`` for reproducible installs. Import the package as ``@upsight/map-renderer``.
 
 The Git installation runs the package's ``prepare`` script. Do not disable
 scripts for this install. npm 12 also requires permission for Git
@@ -35,10 +55,75 @@ dependencies and lifecycle scripts; see the
 `npm installation settings <https://docs.npmjs.com/cli/v12/commands/npm-install/>`_.
 
 Use a browser bundler that supports ES modules and worker URLs.
-The package is distributed through GitHub, not an npm registry.
+Install from the GitHub URL above; the package is not published to an npm registry.
 
-Build an archive instead
-------------------------
+MapLibre example
+----------------
+
+Copy `examples/basicMap.ts <examples/basicMap.ts>`_ into the application source.
+The example creates a MapLibre map with a selectable 8-metre building.
+Set the container dimensions and import MapLibre's CSS:
+
+.. code-block:: html
+
+    <div id="map" style="width: 100%; height: 500px"></div>
+
+.. code-block:: typescript
+
+    import 'maplibre-gl/dist/maplibre-gl.css';
+    import { createBasicMap } from './basicMap.js';
+
+    const lifetime = new AbortController();
+    const view = await createBasicMap(
+      document.getElementById('map')!,
+      'https://tiles.openfreemap.org/styles/liberty',
+      lifetime.signal,
+    );
+
+    // Call when your page or component closes.
+    function disposeMap() {
+      lifetime.abort();
+      view.dispose();
+    }
+
+The example places one building at ``[103.80015, 1.3001]``. Additional buildings
+require feature data from the host application. Replace the OpenFreeMap style URL
+as needed and retain source attribution.
+
+Standalone example
+------------------
+
+For a standalone scene, copy `examples/standaloneMap.ts <examples/standaloneMap.ts>`_
+and use a canvas instead:
+
+.. code-block:: html
+
+    <canvas id="scene" style="width: 100%; height: 500px"></canvas>
+
+.. code-block:: typescript
+
+    import { createStandaloneMap } from './standaloneMap.js';
+
+    const view = createStandaloneMap(
+      document.getElementById('scene') as HTMLCanvasElement,
+    );
+
+    // Call when the view closes.
+    function disposeMap() {
+      view.dispose();
+    }
+
+The standalone example has mouse, touch and keyboard controls without a basemap.
+The renderer handles resizing and schedules frames on demand. Change the view
+with ``view.camera.setView(...)`` or ``view.camera.firstPerson(...)``.
+
+Examples are source templates, not package-root exports. For React or Next.js,
+initialize once after mounting and dispose in effect cleanup, including pending
+startup. Load rendering modules in a browser-only entry point when using SSR.
+See the `API guide <docs/API.rst>`_ for lifecycle methods and worker setup.
+
+Package archive
+---------------
 
 To share a built file without requiring Git in the consuming app, clone the
 source and build an archive::
@@ -49,9 +134,9 @@ source and build an archive::
     npm test
     npm pack --pack-destination ..
 
-``npm pack`` builds the JavaScript and TypeScript declarations. The command
-above writes ``upsight-map-renderer-0.1.0.tgz`` outside the source folder.
-It does not publish anything to a registry.
+``npm pack`` builds JavaScript and TypeScript declarations, then writes
+``upsight-map-renderer-0.1.0.tgz`` outside the source folder. The archive includes
+compiled code, guides and examples.
 
 Copy that archive to your application folder, then run::
 
@@ -60,8 +145,8 @@ Copy that archive to your application folder, then run::
 A GitHub source ZIP or tarball does not contain the compiled ``dist`` folder.
 Use the Git installation command above or build and pack the source first.
 
-Choose a camera
----------------
+Camera configuration
+--------------------
 
 * With an existing MapLibre map, use ``MapLibreConnection`` from
   ``@upsight/map-renderer/maplibre``. MapLibre owns that map's camera and input.
@@ -72,9 +157,8 @@ Choose a camera
   Give the canvas a visible CSS width and height, ``tabIndex=0`` and
   ``touch-action: none``. Dispose the controls and renderer when the view closes.
 
-Each camera instance belongs to its host application. Change a standalone
-camera through ``setView()`` or ``firstPerson()``. Changing an array previously
-passed to the camera does not move it.
+Update a standalone camera through ``setView()`` or ``firstPerson()``;
+the camera does not observe mutations to arrays passed earlier.
 
 Draw a building
 ---------------
@@ -89,13 +173,13 @@ in metres.
     import { MapLibreConnection } from '@upsight/map-renderer/maplibre';
     import type { Map as MapLibreMap } from 'maplibre-gl';
 
-    export function drawDepot(map: MapLibreMap) {
+    export function drawBuilding(map: MapLibreMap) {
       const store = new SceneStore();
       applyFeatureEnvelope(store, {
         schemaVersion: 1,
-        source: { id: 'sites', label: 'Sites', status: 'snapshot', attribution: 'Example data' },
+        source: { id: 'example', label: 'Sample building', status: 'snapshot', attribution: 'Synthetic example' },
         features: [{
-          id: 'sites:depot', source: 'sites', layer: 'buildings', label: 'Depot',
+          id: 'example:building', source: 'example', layer: 'buildings', label: 'Sample building',
           geometry: {
             type: 'Polygon',
             coordinates: [[[103.8, 1.3], [103.8003, 1.3], [103.8003, 1.3002],
@@ -118,29 +202,28 @@ in metres.
       };
     }
 
-Centre the map near the depot at ``[103.80015, 1.3001]`` to see it. Keep the
-returned handle to access its store and renderer. Call ``handle.dispose()``
-when the map view closes. The MapLibre map passed to ``fromMap`` remains
-owned by your application.
+Centre the map at ``[103.80015, 1.3001]``. The returned handle exposes the store,
+renderer and ``dispose()``. The host retains ownership of the MapLibre map
+passed to ``fromMap`` and must remove it separately.
 
 Edit and remove objects
 -----------------------
 
-Use the store returned by ``drawDepot``. This moves the depot 10 metres east,
-rotates it 15 degrees and scales it by 1.2. Related building parts are edited
-together when their group metadata is supplied and the full group is loaded.
+The following example moves the building 10 metres east, rotates it 15 degrees
+and scales it by 1.2. It uses the store returned by a quickstart or ``drawBuilding``.
+Related parts are edited together when group metadata and all members are loaded.
 
 .. code-block:: typescript
 
-    export function editDepot(store: SceneStore) {
-      const features = store.transformSelection('sites:depot', 10, 0, 15, 1.2);
+    export function editBuilding(store: SceneStore) {
+      const features = store.transformSelection('example:building', 10, 0, 15, 1.2);
       store.execute({ type: 'upsert', features });
       store.undo();
       store.redo();
     }
 
-    export function removeDepot(store: SceneStore) {
-      const ids = store.requireSelection('sites:depot').map(feature => feature.id);
+    export function removeBuilding(store: SceneStore) {
+      const ids = store.requireSelection('example:building').map(feature => feature.id);
       store.execute({ type: 'remove', ids });
     }
 
@@ -160,6 +243,11 @@ and ``localSceneStorage`` for browser storage. Source refreshes preserve local
 overrides; saved scenarios contain edits and model IDs, not GLB files or a full
 copy of the source dataset.
 
+This assumes stable source and feature IDs. Overrides are not a field-by-field
+merge with newer upstream features. A source refresh can cancel an active drag;
+committed edits remain separate. See the `data guide <docs/DATA.rst>`_ for group
+membership conflicts, missing features and refresh ownership.
+
 Add models and extensions
 -------------------------
 
@@ -170,6 +258,8 @@ Add models and extensions
   budget before loading. Your application stores the original model files.
   Base-colour textures can use ``TEXCOORD_0`` through ``TEXCOORD_5``; the model
   must contain the selected UV set. Texture scale, rotation and offset are kept.
+  Rendering is static and uses a simplified material pipeline, not every glTF
+  animation or PBR material effect. The `API guide <docs/API.rst>`_ lists the limits.
 * `Depot extension <examples/depotExtension.ts>`_ shows how to draw and pick a
   custom object using the renderer's extension API.
 
@@ -178,6 +268,9 @@ your application and adapt its storage and UI. They are not root package exports
 Supply a ``resolveAsset`` callback when attaching the renderer. Register the
 model bytes before restoring saved placements, and use a new asset ID when
 replacing a model file so cached instances can distinguish the versions.
+
+A charger can use the built-in model or a supplied GLB. Pass edited coordinates
+to routing and scoring services to apply charger movements to their results.
 
 Routes, labels and events
 -------------------------
@@ -191,8 +284,63 @@ Routes, labels and events
 * ``LabelLayer`` places screen labels. ``LiveEventLayer`` maintains supplied
   incidents and their expiry. The host fetches live events and decides how
   they affect routing or arrival estimates.
-* ``applyFeatureEnvelope`` and ``fromGeoJSON`` accept host-provided geographic
-  data. The package does not download a country map or charging feed itself.
+* ``applyFeatureEnvelope`` and ``fromGeoJSON`` accept geographic data from the host.
+
+Supply and refresh data
+-----------------------
+
+.. code-block:: text
+
+    Server or file -> host provider -> GeoFeature data -> SceneStore -> renderer
+    Host UI        -> committed local edits -----------> SceneStore
+
+Use ``applyFeatureEnvelope`` for a complete provider source update and
+``store.execute`` for a local edit. **A source update replaces that source's
+entire base dataset.** If your server returns separate tiles, aggregate the tiles
+you want to keep before replacing the source; publishing each tile as the same
+source would remove the previous tile's base features.
+
+The library does not decode raw OSM PBF, OSM XML or vector-tile PBF files.
+Your provider converts them into the documented feature contract. See the
+`data and refresh guide <docs/DATA.rst>`_ for the input contract, complete source
+updates, stable identities and preserved local overrides.
+
+Performance and troubleshooting
+-------------------------------
+
+Load bounded areas, cancel obsolete requests and reuse the renderer while panning.
+Use stable IDs and detail appropriate to the zoom level. Limit model counts,
+triangles and texture sizes. Workers handle geometry generation; GPU rendering
+and buffer uploads still require profiling on target devices.
+
+``RendererOptions.onStats`` reports geometry mode, draw calls, triangles, buffer
+bytes and CPU timings. The mobile quality profile uses smaller budgets. The
+`API guide <docs/API.rst>`_ explains the renderer options and their limits.
+
+.. list-table:: Common setup problems
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Symptom
+     - Check
+   * - Missing compiled imports
+     - Use the Git install command with lifecycle scripts enabled, or a built archive. A GitHub source ZIP has no compiled ``dist``.
+   * - Blank or tiny canvas
+     - Give the container nonzero CSS width and height, initialize after mounting, and check WebGL support and ``onError``.
+   * - Building is missing
+     - Check longitude/latitude order, camera position, height, layer visibility and validation errors. Basemap buildings do not automatically become scene features.
+   * - Buildings disappear when another tile loads
+     - Aggregate your resident tiles before replacing a source. See the data guide's snapshot rules.
+   * - DOM errors during SSR
+     - Load and initialize rendering modules in browser code after mounting.
+   * - Worker URL fails
+     - Check the bundler and CSP. MapLibre's worker and Babylon geometry workers have separate entry points; see ``Workers`` in the API guide.
+   * - GLB is rejected
+     - Read the validation error and check embedded resources, supported geometry/materials and budgets in the API guide.
+   * - Saved models do not appear
+     - Restore the model bytes under the saved asset IDs. Scenario JSON contains placements, not GLB files.
+   * - An edited building changes membership upstream
+     - Inspect ``buildingRefreshConflicts()`` and let the host resolve it. Do not reset all user edits automatically.
 
 Contribute and verify
 ---------------------
@@ -205,11 +353,10 @@ in the renderer repository before opening a pull request::
     npm run build
     npm run verify
 
-``npm run verify`` tests both archive and Git installation in temporary apps.
-The Git check starts with source files only and verifies that npm builds the
-library and installs its required dependencies. The checks also cover imports,
-TypeScript declarations and browser/worker bundles. Tests remain in this
-repository and are not shipped in the package archive.
+``npm run verify`` checks archive and Git installations, imports, TypeScript
+declarations, browser/worker bundles and packaged documentation. It also typechecks
+and bundles the quickstart examples. Tests remain in the repository and are
+excluded from the package archive.
 
 Include an example or regression test for a behaviour change. Keep existing
 imports and method signatures compatible, and explain any change that requires

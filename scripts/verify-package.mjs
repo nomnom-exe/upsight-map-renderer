@@ -20,8 +20,12 @@ const [pack] = JSON.parse(npm(["pack", "--ignore-scripts", "--json", "--pack-des
 assert.ok(pack.files.some(f => f.path === "dist/rendering/geometry.worker.js"));
 assert.ok(pack.files.some(f => f.path === "dist/geo/routeSurface.worker.js"));
 assert.ok(pack.files.some(f => f.path === "README.rst"));
+assert.ok(pack.files.some(f => f.path === "docs/API.rst"));
+assert.ok(pack.files.some(f => f.path === "docs/DATA.rst"));
 assert.ok(pack.files.some(f => f.path === "examples/depotExtension.ts"));
 assert.ok(pack.files.some(f => f.path === "examples/partnerModels.ts"));
+assert.ok(pack.files.some(f => f.path === "examples/basicMap.ts"));
+assert.ok(pack.files.some(f => f.path === "examples/standaloneMap.ts"));
 assert.ok(!pack.files.some(f => /citypack|\.glb$|\.env|\.blend|\.test\./.test(f.path)), "No app data or test assets in the SDK.");
 const installed = path.join(dir, "node_modules/@upsight/map-renderer");
 // Install the archive without MapLibre first to check that the core works on its own.
@@ -124,7 +128,9 @@ import { BabylonRenderer } from '@upsight/map-renderer/babylon';
 import { MapLibreConnection } from '@upsight/map-renderer/maplibre';
 import { depotExtension } from './node_modules/@upsight/map-renderer/examples/depotExtension.js';
 import { createPartnerModels } from './node_modules/@upsight/map-renderer/examples/partnerModels.js';
-export const API = { SceneStore, BabylonRenderer, MapLibreConnection, LabelLayer, LiveEventLayer, RouteSurfaceResolver, RoutePlayback, RouteSampler, fromGeoJSON, routeFeature, groupAnnotations, depotExtension, createPartnerModels };
+import { createBasicMap } from './node_modules/@upsight/map-renderer/examples/basicMap.js';
+import { createStandaloneMap } from './node_modules/@upsight/map-renderer/examples/standaloneMap.js';
+export const API = { SceneStore, BabylonRenderer, MapLibreConnection, LabelLayer, LiveEventLayer, RouteSurfaceResolver, RoutePlayback, RouteSampler, fromGeoJSON, routeFeature, groupAnnotations, depotExtension, createPartnerModels, createBasicMap, createStandaloneMap };
 export const playbackState: PlaybackState | null = new RoutePlayback().state;
 export const plugin: RendererExtensionFactory = { id: 'custom', create: () => ({ sync() {}, render() {}, dispose() {} }) };
 `);
@@ -213,9 +219,11 @@ map.once('load', () => {
   await build({ entryPoints: [path.join(installed, "dist/rendering/geometry.worker.js")], bundle: true,
     outfile: path.join(smoke, "geometry.worker.js"), format: "esm", platform: "browser", logLevel: "silent" });
   writeFileSync(path.join(smoke, "maplibre.css"), readFileSync(path.join(dir, "node_modules/maplibre-gl/dist/maplibre-gl.css")));
-  // Copy the worker beside main.js, where MapLibre looks for it. esbuild doesn't copy it automatically.
-  writeFileSync(path.join(smoke, "maplibre-gl-worker.mjs"),
-    readFileSync(path.join(dir, "node_modules/maplibre-gl/dist/maplibre-gl-worker.mjs")));
+  // MapLibre's worker imports its shared module. Keep both beside main.js.
+  for (const file of ["maplibre-gl-worker.mjs", "maplibre-gl-shared.mjs"]) {
+    copyFileSync(path.join(dir, "node_modules/maplibre-gl/dist", file), path.join(smoke, file));
+  }
+  copyFileSync(path.join(dir, "node_modules/maplibre-gl/LICENSE.txt"), path.join(smoke, "LICENSE.txt"));
   writeFileSync(path.join(smoke, "index.html"), `<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Packed renderer integration check</title>
 <link rel="icon" href="data:,"><link rel="stylesheet" href="maplibre.css"><style>body{margin:0;font:16px system-ui;background:#edf1ed}#map{height:100vh}

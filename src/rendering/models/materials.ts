@@ -45,7 +45,9 @@ void main(){
  vec3 c=color; vec2 uv=uvMaterial.xy; float m=uvMaterial.z;
  // The whole number picks the surface type. The first decimal digit picks one
  // of three patterns, all drawn in the same shader without a texture lookup.
- float variant=floor(fract(m)*10.0+.5);
+ // Round the packed code before separating its digits. Interpolation can put
+ // an integer material just below its value, where fract would wrap to one.
+ float variant=mod(floor(m*10.0+.5),10.0);
  if(m>.5 && m<1.5){
    vec2 cell=uv/vec2(1.6+variant*.3,3.2), f=fract(cell);
    vec2 aa=max(pixelWidth(cell),vec2(.004));
