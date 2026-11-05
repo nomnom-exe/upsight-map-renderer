@@ -98,6 +98,28 @@ it("keeps playback progress while replacing a road surface profile", () => {
   expect(playback.state).toMatchObject({ playing: true, progress: 0.5, elevation: 5.4 });
   expect(playback.ahead(20)?.elevation).toBe(5.4);
 });
+it("copies surface profiles so caller edits cannot change active playback", () => {
+  const elevations = [2, 4, 6], segmentMask = [true, false];
+  const route = { positions, elevations, segmentMask, durationSeconds: 10, distanceMetres: 840, source: "test" };
+  const playback = new RoutePlayback();
+  playback.setRoute(route);
+  const initial = playback.state;
+  const ahead = playback.ahead(20);
+  playback.seek(0.5);
+  const midpoint = playback.state;
+
+  elevations[0] = NaN;
+  elevations[1] = 100;
+  segmentMask.reverse();
+  expect(playback.state).toEqual(midpoint);
+  playback.seek(0);
+  expect(playback.state).toEqual(initial);
+  expect(playback.ahead(20)).toEqual(ahead);
+
+  elevations[0] = 10;
+  playback.setRoute(route);
+  expect(playback.state).toMatchObject({ elevation: 10, surfaceVisible: false });
+});
 it("marks a masked grade transition invisible throughout playback and look-ahead", () => {
   const route = { positions, elevations: [0.4, 5.4, 5.4], segmentMask: [false, true],
     durationSeconds: 10, distanceMetres: 840, source: "test" };

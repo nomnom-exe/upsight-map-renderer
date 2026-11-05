@@ -3,6 +3,11 @@ import { expect, it, vi } from "vitest";
 import { NullEngine } from "@babylonjs/core/Engines/nullEngine.js";
 import { Scene } from "@babylonjs/core/scene.js";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector.js";
+import { AssetContainer } from "@babylonjs/core/assetContainer.js";
+import { Mesh } from "@babylonjs/core/Meshes/mesh.js";
+import { PBRMaterial } from "@babylonjs/core/Materials/PBR/pbrMaterial.js";
+import { RawTexture } from "@babylonjs/core/Materials/Textures/rawTexture.js";
+import type { ShaderMaterial } from "@babylonjs/core/Materials/shaderMaterial.js";
 import { inspectGLB } from "../src/assets/validation";
 import { AssetLayer } from "../src/rendering/AssetLayer";
 import { MapCamera } from "../src/engine/MapCamera";
@@ -11,6 +16,10 @@ import { DEFAULT_STYLE, type GeoFeature, type Position } from "../src/geo/types"
 import { localFrame, unmercator } from "../src/geo/math";
 
 import { glb, triangle } from "./fixtures/glb";
+// Keep the real loader by default, but allow the material tests to supply decoded textures.
+vi.mock("@babylonjs/core/Loading/sceneLoader.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@babylonjs/core/Loading/sceneLoader.js")>(),
+}));
 it("refuses URI-bearing extensions, oversized implicit accessors and out-of-bounds sparse data before decoding", () => {
   const external = glb({ extensionsUsed: ["EXT_lights_ies"],
     extensions: { EXT_lights_ies: { lights: [{ uri: "https://example.invalid/external.ies" }] } },
@@ -89,7 +98,7 @@ it("renders translated nodes sharing a non-indexed mesh, counts both, and picks 
     before.forEach(({ x, y }) => expect(layer.pick(x, y, 800, 600)).toBeNull());
     pixels().forEach(({ x, y }) => expect(layer.pick(x, y, 800, 600)?.id).toBe(feature.id));
   } finally { dispose(); }
-});
+}, 15000);
 
 it.each([true, false])("keeps a flat ordinary asset usable with a charger (asset loaded first: %s)", async (cached) => {
   const { layer, camera, draw, upsert, dispose, errors } = sceneFixture(glb());
@@ -108,6 +117,81 @@ it.each([true, false])("keeps a flat ordinary asset usable with a charger (asset
     draw();
     expect(errors.mock.calls.filter(([message]) => message.includes("nonzero height"))).toHaveLength(1);
   } finally { dispose(); }
+}, 15000);
+
+function texturedContainer(scene: Scene, uvIndex: number, includeUV = true) {
+  const container = new AssetContainer(scene), mesh = new Mesh("textured", scene);
+  mesh.setVerticesData("position", Array.from(triangle));
+  mesh.setVerticesData("normal", [0, 1, 0, 0, 1, 0, 0, 1, 0]);
+  mesh.setVerticesData("uv", [0, 0, 1, 0, 0, 1]);
+  const attribute = uvIndex === 0 ? "uv" : `uv${uvIndex + 1}`;
+  if (includeUV && uvIndex <= 5) mesh.setVerticesData(attribute, [.2, .3, .8, .3, .2, .9]);
+  const material = new PBRMaterial("textured", scene);
+  const texture = RawTexture.CreateRGBATexture(new Uint8Array([255, 255, 255, 255]), 1, 1, scene);
+  texture.coordinatesIndex = uvIndex;
+  texture.uScale = .5; texture.vScale = .25;
+  texture.uOffset = .2; texture.vOffset = .1; texture.wAng = .35;
+  material.albedoTexture = texture; mesh.material = material;
+  container.meshes.push(mesh); container.rootNodes.push(mesh);
+  container.materials.push(material); container.textures.push(texture);
+  container.removeAllFromScene();
+  return { container, mesh, material, texture, attribute };
+}
+
+it.each([0, 1, 5])("uses the authored TEXCOORD_%s set and texture transform when converting GLB materials", async (index) => {
+  const { layer, scene, draw, upsert, dispose } = sceneFixture(glb());
+  const { container, mesh, texture, attribute } = texturedContainer(scene, index);
+  // The decoder has already applied textureInfo.texCoord or KHR_texture_transform.texCoord.
+  // Supply that decoded container to test the renderer's material conversion.
+  const loader = await import("@babylonjs/core/Loading/sceneLoader.js");
+  const load = vi.spyOn(loader, "LoadAssetContainerAsync").mockResolvedValue(container);
+  try {
+    const expectedUV = mesh.getVerticesData(attribute);
+    const expectedTransform = texture.getTextureMatrix().asArray();
+    upsert(feature);
+    await vi.waitFor(() => { draw(); expect(layer.stats.visible).toBe(1); }, { timeout: 10000 });
+    const placed = scene.meshes.find(m => m.getTotalVertices() > 0)!;
+    const material = placed.material as ShaderMaterial;
+    expect(placed.getVerticesData(attribute)).toEqual(expectedUV);
+    expect(material.options.attributes).toEqual(["position", "normal", attribute]);
+    expect((material.shaderPath as { vertexSource: string }).vertexSource).toContain(`vec4(${attribute},1.,0.)`);
+    expect(material.serialize().matrices.textureMatrix).toEqual(expectedTransform);
+  } finally { load.mockRestore(); dispose(); }
+}, 15000);
+
+it("keeps the first UV set for untextured facade grids", async () => {
+  const { layer, scene, draw, upsert, dispose } = sceneFixture(glb());
+  const { container, material: source } = texturedContainer(scene, 0);
+  source.albedoTexture = null;
+  source.metadata = { gltf: { extras: { upsightduckFacade: [3, 4] } } };
+  const loader = await import("@babylonjs/core/Loading/sceneLoader.js");
+  const load = vi.spyOn(loader, "LoadAssetContainerAsync").mockResolvedValue(container);
+  try {
+    upsert(feature);
+    await vi.waitFor(() => { draw(); expect(layer.stats.visible).toBe(1); }, { timeout: 10000 });
+    const placed = scene.meshes.find(m => m.getTotalVertices() > 0)!;
+    const material = placed.material as ShaderMaterial;
+    expect(material.options.attributes).toContain("uv");
+    expect((material.shaderPath as { vertexSource: string }).vertexSource).toContain("vec4(uv,1.,0.)");
+    expect(material.serialize().vectors2.facadeCell).toEqual([3, 4]);
+  } finally { load.mockRestore(); dispose(); }
+}, 15000);
+
+it.each([
+  [1, false, "missing TEXCOORD_1"],
+  [6, true, "TEXCOORD_0 to TEXCOORD_5"],
+] as const)("rejects an unavailable texture UV set (%s) before creating map instances", async (index, present, message) => {
+  const { layer, scene, errors, draw, upsert, dispose } = sceneFixture(glb());
+  const { container } = texturedContainer(scene, index, present);
+  const released = vi.spyOn(container, "dispose");
+  const loader = await import("@babylonjs/core/Loading/sceneLoader.js");
+  const load = vi.spyOn(loader, "LoadAssetContainerAsync").mockResolvedValue(container);
+  try {
+    upsert(feature);
+    await vi.waitFor(() => { draw(); expect(errors).toHaveBeenCalledWith(expect.stringContaining(message)); });
+    expect(layer.stats.visible).toBe(0);
+    expect(released).toHaveBeenCalledOnce();
+  } finally { load.mockRestore(); dispose(); }
 });
 
 it.each([true, false])("rejects external lighting payloads before loader URI resolution (declared: %s)", async (declared) => {

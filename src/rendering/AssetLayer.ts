@@ -31,11 +31,26 @@ import { inspectGLBResources, MAX_DECODED_GLB_BYTES, MAX_GLB_BYTES } from "../as
 import { surfaceFragment } from "./models/materials.js";
 export type AssetResolver = (id: string) => Promise<Uint8Array>;
 
-const vertex = `precision highp float;
-attribute vec3 position; attribute vec3 normal; attribute vec2 uv;
+const vertex = (uvAttribute?: string) => `precision highp float;
+attribute vec3 position; attribute vec3 normal;
+${uvAttribute ? `attribute vec2 ${uvAttribute};` : ""}
 uniform mat4 mapMatrix; uniform mat4 normalMatrix; uniform mat4 textureMatrix;
 varying vec3 n; varying vec2 texUV;
-void main(){gl_Position=mapMatrix*vec4(position,1.);n=mat3(normalMatrix)*normal;texUV=(textureMatrix*vec4(uv,1.,0.)).xy;}`;
+void main(){gl_Position=mapMatrix*vec4(position,1.);n=mat3(normalMatrix)*normal;texUV=(textureMatrix*vec4(${uvAttribute ?? "vec2(0.)"},1.,0.)).xy;}`;
+
+/** Babylon records the glTF texture's chosen TEXCOORD set on coordinatesIndex. */
+function textureUV(source: PBRMaterial | null, mesh: AbstractMesh): string | undefined {
+  const texture = source?.albedoTexture;
+  // Untextured facade grids still use the model's first UV set.
+  if (!texture) return mesh.isVerticesDataPresent("uv") ? "uv" : undefined;
+  const index = texture.coordinatesIndex;
+  if (!Number.isInteger(index) || index < 0 || index > 5)
+    throw new Error("Use a base-colour texture UV set from TEXCOORD_0 to TEXCOORD_5.");
+  const attribute = index === 0 ? "uv" : `uv${index + 1}`;
+  if (!mesh.isVerticesDataPresent(attribute))
+    throw new Error(`Model base-colour texture requires missing TEXCOORD_${index} data.`);
+  return attribute;
+}
 const assetSurface = `
 uniform vec3 baseColor; uniform vec3 tint; uniform float selected; uniform float opacity;
 uniform float textured; uniform float cutoff; uniform sampler2D baseTexture;
@@ -201,6 +216,9 @@ export class AssetLayer {
       for (const mesh of container.meshes) {
         mesh.computeWorldMatrix(true);
         if (!mesh.getTotalVertices()) continue;
+        const materials = mesh.material instanceof MultiMaterial
+          ? mesh.material.subMaterials : [mesh.material];
+        for (const material of materials) textureUV(material as PBRMaterial | null, mesh);
         const box = mesh.getBoundingInfo().boundingBox;
         min.minimizeInPlace(box.minimumWorld);
         max.maximizeInPlace(box.maximumWorld);
@@ -274,12 +292,13 @@ export class AssetLayer {
     const surfaces: Instance["surfaces"] = [];
     const meshes = root.getChildMeshes();
     const shader = (source: PBRMaterial | null, mesh: AbstractMesh) => {
+      const uvAttribute = textureUV(source, mesh);
       const material = new ShaderMaterial(
         `${f.id}:surface`,
         this.scene,
-        { vertexSource: vertex, fragmentSource: this.fragment },
+        { vertexSource: vertex(uvAttribute), fragmentSource: this.fragment },
         {
-          attributes: ["position", "normal", "uv"],
+          attributes: ["position", "normal", ...(uvAttribute ? [uvAttribute] : [])],
           uniforms: [
             "mapMatrix",
             "normalMatrix",

@@ -34,6 +34,9 @@ export class RouteSampler {
       throw new Error("Invalid route elevation profile.");
     if (segmentMask && (segmentMask.length !== this.positions.length - 1 || segmentMask.some(value => typeof value !== "boolean")))
       throw new Error("Invalid route segment mask.");
+    // Keep the validated profiles stable if the caller updates its source arrays.
+    if (elevations) this.elevations = Object.freeze([...elevations]);
+    if (segmentMask) this.segmentMask = Object.freeze([...segmentMask]);
     for (let i = 1; i < this.positions.length; i++)
       this.cumulative.push(
         this.cumulative[i - 1] +

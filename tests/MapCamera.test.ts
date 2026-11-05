@@ -11,6 +11,31 @@ import { localFrame } from "@upsight/map-renderer/geo/math";
 import type { Position } from "@upsight/map-renderer/geo/types";
 
 describe("owned geographic camera", () => {
+  it("keeps its view and projection stable when caller coordinates change", () => {
+    const center: [number, number] = [103.852, 1.287];
+    const camera = new MapCamera(center);
+    camera.resize(1000, 600);
+    const initial = camera.state;
+    const matrix = [...camera.transform.asArray()];
+
+    center[0] += 0.1;
+    expect(camera.state).toEqual(initial);
+    expect(camera.snapshot().center).toEqual(initial.center);
+    expect([...camera.transform.asArray()]).toEqual(matrix);
+    expect(camera.project(camera.state.center)!.x).toBeCloseTo(500, 3);
+
+    const driver: [number, number] = [103.86, 1.29];
+    camera.firstPerson(driver, 30, 5);
+    const following = camera.state;
+    const ground = camera.screenToGround(500, 500);
+    driver[1] += 0.1;
+    expect(camera.state).toEqual(following);
+    expect(camera.snapshot().center).toEqual(following.center);
+    expect(camera.screenToGround(500, 500)).toEqual(ground);
+
+    camera.firstPerson(driver, 30, 5);
+    expect(camera.state.center).toEqual(driver);
+  });
   it.each([
     [103.852, 1.287],
     [2.17, 41.38],

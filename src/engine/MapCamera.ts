@@ -41,7 +41,7 @@ export class MapCamera implements CameraView {
       Math.abs(center[1]) > 85
     )
       throw new Error("Invalid map center.");
-    this.view = { center, zoom: 15.8, pitch: 40, bearing: -17 };
+    this.view = { center: [...center], zoom: 15.8, pitch: 40, bearing: -17 };
     this.update();
   }
   get state(): MapView {
@@ -94,7 +94,7 @@ export class MapCamera implements CameraView {
       Math.abs(center[1]) > 85
     )
       return;
-    this.view = { center, zoom: 19, pitch: 90, bearing };
+    this.view = { center: [...center], zoom: 19, pitch: 90, bearing };
     this.eyeHeight = Math.max(-1000, Math.min(1000, surfaceElevation)) + 1.8;
     this.update();
   }

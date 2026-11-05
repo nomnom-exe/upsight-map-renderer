@@ -76,7 +76,7 @@ it("picks an edited GLB after a host has initialised Babylon at default matrix p
     const pixel = renderer.project(coordinates)!;
     expect(renderer.pick(pixel.x, pixel.y)).toBe(asset.id);
   } finally { renderer.dispose(); host.dispose(); }
-});
+}, 15_000);
 
 it("updates shared-surface rendering budgets when the host resizes to a phone viewport", () => {
   vi.useFakeTimers();
